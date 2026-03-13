@@ -656,11 +656,14 @@ fn draw_results(f: &mut Frame, app: &mut App) {
             .and_then(|f| f.to_str())
             .unwrap_or("?");
 
+        let file_type = issue.file.extension().map(|ext| ext.to_string_lossy().to_string()).unwrap_or_default();
+
         let kind_str = issue.kind.to_string();
 
         Row::new(vec![
             Cell::from(Span::styled(sev_sym, Style::default().fg(sev_color).add_modifier(Modifier::BOLD))),
             Cell::from(Span::styled(file_name, Style::default().fg(Color::Rgb(180, 190, 220)))),
+            Cell::from(Span::styled(file_type, Style::default().fg(Color::Rgb(180, 190, 220)))),
             Cell::from(Span::styled(issue.line.to_string(), Style::default().fg(Color::Rgb(120, 130, 160)))),
             Cell::from(Span::styled(kind_str, Style::default().fg(Color::Rgb(150, 200, 180)))),
             Cell::from(Span::styled(
@@ -684,7 +687,7 @@ fn draw_results(f: &mut Frame, app: &mut App) {
         ],
     )
     .header(
-        Row::new(vec!["Sev", "File", "Line", "Issue Type", "Message"])
+        Row::new(vec!["Sev", "File", "FileType", "Line", "Issue Type", "Message"])
             .style(Style::default().fg(Color::Rgb(100, 110, 160)).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
     )
     .block(
@@ -823,6 +826,7 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
     };
 
     let file_path = issue.file.to_string_lossy().to_string();
+    let file_type = issue.file.extension().map(|ext| ext.to_string_lossy().to_string()).unwrap_or_default();
 
     let content = vec![
         Line::from(""),
@@ -839,6 +843,11 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
         Line::from(vec![
             Span::styled("  File      ", Style::default().fg(Color::Rgb(100, 110, 160))),
             Span::styled(&file_path, Style::default().fg(Color::Rgb(180, 190, 220))),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  File type      ", Style::default().fg(Color::Rgb(100, 110, 160))),
+            Span::styled(&file_type, Style::default().fg(Color::Rgb(180, 190, 220))),
         ]),
         Line::from(vec![
             Span::styled("  Line      ", Style::default().fg(Color::Rgb(100, 110, 160))),
