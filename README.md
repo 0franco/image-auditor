@@ -83,6 +83,16 @@ cargo build --release
 ./target/release/image-auditor
 ```
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=0franco%2Fimage-auditor&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=0franco/image-auditor&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=0franco/image-auditor&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=0franco/image-auditor&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ## 🤝 Contributing
 
 Contribute! Please open an issue or submit a pull request.
