@@ -10,7 +10,10 @@ static IMG_START_RE: OnceLock<Regex> = OnceLock::new();
 static IMAGE_JSX_RE: OnceLock<Regex> = OnceLock::new();
 
 fn get_img_tag_re() -> &'static Regex {
-    IMG_TAG_RE.get_or_init(|| Regex::new(r"(?is)<img\b([^>]*?)>").expect("Invalid Regex"))
+    IMG_TAG_RE.get_or_init(|| {
+        Regex::new(r#"(?is)<img\b((?:"[^"]*"|'[^']*'|<\?(?:php|=)[^?]*\?>|[^>"'])*)\s*/?>"#)
+            .expect("Invalid Regex")
+    })
 }
 
 fn get_img_start_re() -> &'static Regex {

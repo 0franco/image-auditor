@@ -1,6 +1,7 @@
 use std::{
     io,
     path::PathBuf,
+    sync::{mpsc, Arc},
     time::{Duration, Instant},
 };
 
@@ -22,7 +23,9 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::scanner::{scan_directory, Issue, IssueSeverity, IssueKind, ScanResult};
+use crate::config::load_llm_config;
+use crate::llm::{create_llm_client, LlmClient, LlmSuggestion, SuggestedPatch};
+use crate::scanner::{scan_directory, Issue, IssueKind, IssueSeverity, ScanResult};
 
 #[derive(PartialEq)]
 enum Screen {
@@ -48,6 +51,13 @@ pub struct App {
     active_tab: usize,
     // Detail
     detail_issue: Option<Issue>,
+    detail_suggestion: Option<String>,
+    detail_suggested_patch: Option<SuggestedPatch>,
+    detail_loading_suggestion: bool,
+    detail_suggestion_error: Option<String>,
+    detail_suggestion_rx: Option<mpsc::Receiver<anyhow::Result<LlmSuggestion>>>,
+    detail_patch_confirm_mode: bool,
+    detail_patch_error: Option<String>,
     // Filter
     filter_severity: Option<IssueSeverity>,
     search_query: String,
@@ -58,6 +68,8 @@ pub struct App {
     running: bool,
     save_success_time: Option<Instant>,
     copy_success_time: Option<Instant>,
+    llm_client: Option<Arc<dyn LlmClient>>,
+    detail_scroll: u16,
 }
 
 impl App {
@@ -78,6 +90,13 @@ impl App {
             scroll_state: ScrollbarState::default(),
             active_tab: 0,
             detail_issue: None,
+            detail_suggestion: None,
+            detail_suggested_patch: None,
+            detail_loading_suggestion: false,
+            detail_suggestion_error: None,
+            detail_suggestion_rx: None,
+            detail_patch_confirm_mode: false,
+            detail_patch_error: None,
             filter_severity: None,
             search_query: String::new(),
             search_mode: false,
@@ -86,6 +105,8 @@ impl App {
             running: true,
             save_success_time: None,
             copy_success_time: None,
+            llm_client: None,
+            detail_scroll: 0,
         }
     }
 
@@ -142,6 +163,11 @@ pub fn run(path: Option<PathBuf>) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new();
+    if let Ok(Some(cfg)) = load_llm_config() {
+        if let Ok(client) = create_llm_client(&cfg) {
+            app.llm_client = Some(client);
+        }
+    }
     if let Some(p) = path {
         app.input_path = p.to_string_lossy().to_string();
         start_scan(&mut app);
@@ -203,6 +229,26 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut A
                         app.screen = Screen::Menu;
                     }
                 }
+            }
+        }
+
+        // Poll LLM suggestion result
+        if let Some(ref rx) = app.detail_suggestion_rx {
+            if let Ok(result) = rx.try_recv() {
+                app.detail_loading_suggestion = false;
+                match result {
+                    Ok(suggestion) => {
+                        app.detail_suggestion = Some(suggestion.text);
+                        app.detail_suggested_patch = suggestion.patch;
+                        app.detail_suggestion_error = None;
+                    }
+                    Err(e) => {
+                        app.detail_suggestion_error = Some(e.to_string());
+                        app.detail_suggestion = None;
+                        app.detail_suggested_patch = None;
+                    }
+                }
+                app.detail_suggestion_rx = None;
             }
         }
 
@@ -367,10 +413,88 @@ fn handle_results_input(app: &mut App, key: KeyCode) {
 }
 
 fn handle_detail_input(app: &mut App, key: KeyCode) {
+    // Scroll in all detail modes (normal + patch preview)
+    match key {
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.detail_scroll = app.detail_scroll.saturating_sub(1);
+            return;
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.detail_scroll = app.detail_scroll.saturating_add(1);
+            return;
+        }
+        _ => {}
+    }
+
+    if app.detail_patch_confirm_mode {
+        match key {
+            KeyCode::Char('y') => {
+                if let (Some(issue), Some(patch)) =
+                    (app.detail_issue.as_ref(), app.detail_suggested_patch.as_ref())
+                {
+                    if let Err(e) = apply_suggested_patch(issue, patch) {
+                        app.detail_patch_error = Some(format!("Patch failed: {}", e));
+                    } else {
+                        app.detail_patch_error = None;
+                    }
+                }
+                app.detail_patch_confirm_mode = false;
+            }
+            KeyCode::Char('n') | KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+                app.detail_patch_confirm_mode = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
             app.screen = Screen::Results;
             app.detail_issue = None;
+            app.detail_suggestion = None;
+            app.detail_suggested_patch = None;
+            app.detail_suggestion_error = None;
+            app.detail_loading_suggestion = false;
+            app.detail_patch_confirm_mode = false;
+            app.detail_patch_error = None;
+            app.detail_scroll = 0;
+        }
+        KeyCode::Char('a') => {
+            if app.detail_loading_suggestion {
+                return;
+            }
+            let Some(issue) = app.detail_issue.clone() else { return };
+            let Some(client) = app.llm_client.clone() else {
+                app.detail_suggestion_error = Some("LLM provider not configured.".to_string());
+                return;
+            };
+
+            app.detail_loading_suggestion = true;
+            app.detail_suggestion = None;
+            app.detail_suggested_patch = None;
+            app.detail_suggestion_error = None;
+            app.detail_scroll = 0;
+
+            let prompt = build_issue_prompt(&issue);
+            let (tx, rx) = mpsc::channel();
+            app.detail_suggestion_rx = Some(rx);
+
+            let prompt_owned = prompt.clone();
+
+            std::thread::spawn(move || {
+                let result = client.suggest_fix(&prompt_owned);
+                let _ = tx.send(result);
+            });
+        }
+        KeyCode::Char('p') => {
+            if app.detail_suggested_patch.is_some() {
+                app.detail_patch_confirm_mode = true;
+                app.detail_patch_error = None;
+            } else {
+                app.detail_patch_error =
+                    Some("No patch available from LLM. Press 'a' to ask first.".to_string());
+            }
         }
         _ => {}
     }
@@ -828,7 +952,7 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
     let file_path = issue.file.to_string_lossy().to_string();
     let file_type = issue.file.extension().map(|ext| ext.to_string_lossy().to_string()).unwrap_or_default();
 
-    let content = vec![
+    let mut content = vec![
         Line::from(""),
         Line::from(vec![
             Span::styled("  Severity  ", Style::default().fg(Color::Rgb(100, 110, 160))),
@@ -871,15 +995,106 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
             Style::default().fg(Color::Rgb(140, 150, 180)),
         )),
         Line::from(""),
-        Line::from(Span::styled(
-            "  [Esc / q] Back",
-            Style::default().fg(Color::Rgb(80, 100, 150)),
-        )),
     ];
+
+    // LLM suggestion state
+    if app.detail_loading_suggestion {
+        content.push(Line::from(Span::styled(
+            "  ⏳ Asking LLM for fix suggestion...",
+            Style::default().fg(Color::Rgb(99, 179, 237)),
+        )));
+        content.push(Line::from(""));
+    } else if let Some(ref err) = app.detail_suggestion_error {
+        content.push(Line::from(Span::styled(
+            format!("  ⚠ LLM error: {}", err),
+            Style::default().fg(Color::Rgb(235, 80, 80)),
+        )));
+        content.push(Line::from(""));
+    } else if let Some(ref suggestion) = app.detail_suggestion {
+        content.push(Line::from(Span::styled(
+            "  LLM Suggestion",
+            Style::default()
+                .fg(Color::Rgb(150, 220, 200))
+                .add_modifier(Modifier::BOLD),
+        )));
+        content.push(Line::from(""));
+        for line in suggestion.lines() {
+            content.push(Line::from(Span::styled(
+                format!("  {}", line),
+                Style::default().fg(Color::Rgb(200, 210, 240)),
+            )));
+        }
+        content.push(Line::from(""));
+    }
+
+    // Patch availability / preview
+    if app.detail_patch_confirm_mode {
+        content.push(Line::from(Span::styled(
+            "  Patch Preview",
+            Style::default()
+                .fg(Color::Rgb(99, 235, 180))
+                .add_modifier(Modifier::BOLD),
+        )));
+        if let Some(ref patch) = app.detail_suggested_patch {
+            content.push(Line::from(""));
+            content.push(Line::from(Span::styled(
+                "  Before:",
+                Style::default().fg(Color::Rgb(235, 80, 80)),
+            )));
+            for line in patch.before.lines() {
+                content.push(Line::from(Span::styled(
+                    format!("- {}", line),
+                    Style::default().fg(Color::Rgb(235, 120, 120)),
+                )));
+            }
+            content.push(Line::from(""));
+            content.push(Line::from(Span::styled(
+                "  After:",
+                Style::default().fg(Color::Rgb(99, 235, 180)),
+            )));
+            for line in patch.after.lines() {
+                content.push(Line::from(Span::styled(
+                    format!("+ {}", line),
+                    Style::default().fg(Color::Rgb(140, 240, 200)),
+                )));
+            }
+            content.push(Line::from(""));
+        }
+        content.push(Line::from(Span::styled(
+            "  [↑/↓ or j/k] Scroll  ·  [y] Apply patch   [n / Esc / q] Cancel",
+            Style::default().fg(Color::Rgb(80, 100, 150)),
+        )));
+    } else {
+        if app.detail_suggested_patch.is_some() {
+            content.push(Line::from(Span::styled(
+                "  Patch available (press 'p' to preview & apply)",
+                Style::default().fg(Color::Rgb(150, 220, 200)),
+            )));
+        }
+        if let Some(ref err) = app.detail_patch_error {
+            content.push(Line::from(Span::styled(
+                format!("  ⚠ Patch error: {}", err),
+                Style::default().fg(Color::Rgb(235, 80, 80)),
+            )));
+        }
+        content.push(Line::from(""));
+        content.push(Line::from(Span::styled(
+            "  [a] Ask LLM for fix  ·  [p] Preview/apply patch  ·  [↑/↓ or j/k] Scroll  ·  [Esc / q] Back",
+            Style::default().fg(Color::Rgb(80, 100, 150)),
+        )));
+    }
+
+    // Clamp scroll so we don't go past the end unnecessarily
+    let visible_lines = popup_area.height.saturating_sub(4) as usize;
+    let max_scroll = content.len().saturating_sub(visible_lines);
+    let clamped_scroll = app
+        .detail_scroll
+        .min(max_scroll as u16);
 
     f.render_widget(
         Paragraph::new(content)
             .wrap(Wrap { trim: false })
+            .scroll((clamped_scroll, 0))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -907,6 +1122,97 @@ fn fix_advice(kind: &IssueKind) -> String {
         IssueKind::MissingSrcset =>
             "  💡 Fix: Add srcset with multiple resolutions, e.g.: srcset=\"img-400.webp 400w, img-800.webp 800w\"".to_string(),
     }
+}
+
+fn build_issue_prompt(issue: &Issue) -> String {
+    let file_path = issue.file.to_string_lossy();
+    let file_type = issue
+        .file
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let verbose = std::env::var("AI_VERBOSE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes"))
+        .unwrap_or(false);
+
+    if !verbose {
+        return format!(
+            "You are helping improve image delivery and related HTML/JS/TS code.\n\
+File: {file_path}\n\
+File type: {file_type}\n\
+Line: {line}\n\
+Issue kind: {kind}\n\
+Message: {msg}\n\
+Snippet:\n{snippet}\n\n\
+Your task:\n\
+- Propose a safe, minimal code change that fixes this specific issue.\n\
+- Output STRICTLY ONE structured patch block in this exact format, with NO explanations, NO prose, and NO markdown fences:\n\
+---PATCH---\n\
+file: {file_path}\n\
+BEFORE:\n\
+<code to replace>\n\
+---END_BEFORE---\n\
+AFTER:\n\
+<replacement code>\n\
+---END_AFTER---\n\
+---END_PATCH---\n\
+If and only if you truly cannot propose a safe patch, output exactly:\n\
+NO_PATCH",
+            line = issue.line,
+            kind = issue.kind.to_string(),
+            msg = issue.message,
+            snippet = issue.snippet,
+        );
+    }
+
+    format!(
+        "You are helping improve image delivery and related HTML/JS/TS code.\n\
+File: {file_path}\n\
+File type: {file_type}\n\
+Line: {line}\n\
+Issue kind: {kind}\n\
+Message: {msg}\n\
+Snippet:\n{snippet}\n\n\
+First, briefly explain how to fix this issue and, if helpful, show a small corrected code example.\n\
+Then, if possible, emit a structured patch block using exactly this format:\n\
+---PATCH---\n\
+file: {file_path}\n\
+BEFORE:\n\
+<code to replace>\n\
+---END_BEFORE---\n\
+AFTER:\n\
+<replacement code>\n\
+---END_AFTER---\n\
+---END_PATCH---\n\
+If you cannot safely propose a concrete patch, omit the PATCH block entirely.",
+        line = issue.line,
+        kind = issue.kind.to_string(),
+        msg = issue.message,
+        snippet = issue.snippet,
+    )
+}
+
+fn apply_suggested_patch(issue: &Issue, patch: &SuggestedPatch) -> Result<()> {
+    use std::fs;
+
+    let file_path = &issue.file;
+    let contents = fs::read_to_string(file_path)?;
+
+    let before = patch.before.trim_matches('\n');
+    let after = patch.after.trim_matches('\n');
+
+    let idx = contents
+        .find(before)
+        .ok_or_else(|| anyhow::anyhow!("Original snippet not found in file"))?;
+
+    let mut new_contents = String::with_capacity(contents.len() + after.len());
+    new_contents.push_str(&contents[..idx]);
+    new_contents.push_str(after);
+    new_contents.push_str(&contents[idx + before.len()..]);
+
+    fs::write(file_path, new_contents)?;
+    Ok(())
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {

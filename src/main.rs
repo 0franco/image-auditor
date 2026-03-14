@@ -1,5 +1,7 @@
 mod scanner;
 mod tui;
+mod config;
+mod llm;
 
 use clap::Parser;
 use std::path::PathBuf;
@@ -13,6 +15,9 @@ struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Load environment variables from a local .env file if present.
+    let _ = dotenvy::from_filename(".env");
+
     let cli = Cli::parse();
     tui::run(cli.path)?;
     Ok(())

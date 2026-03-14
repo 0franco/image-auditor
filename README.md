@@ -1,4 +1,4 @@
-# 🖼 Image Auditor Tool
+# 🖼 AI Image Auditor Tool
 
 **Find and fix image performance problems in seconds.**
 
@@ -22,6 +22,7 @@ teams** who care about **LCP, CLS, and page speed**.
 -   Instant filtering by **severity**
 -   Export results to **JSON reports**
 -   Copy file paths directly from the UI
+-   **AI‑powered automatic code fix suggestions** (OpenAI, Anthropic, or local Ollama)
 
 
 ## 🔎 Detected Issues
@@ -75,6 +76,90 @@ image-auditor /var/www/html
 | `s` | Save report to `image-audit-report.json` |
 | `c` | Copy current row file path to clipboard |
 | `q / Esc` | Back / quit |
+| `a` (Detail view) | Ask AI for an automatic code fix suggestion |
+| `p` (Detail view) | Preview & apply the AI‑proposed patch (with confirmation) |
+
+## 🤖 AI‑Powered Automatic Code Fix Suggestions
+
+Turn Image Auditor into your **AI image‑performance co‑pilot**.
+
+When you open the **Detail** view for any issue, you can:
+
+-   Press **`a`** to **ask the configured LLM** (OpenAI, Anthropic, or local Ollama) for:
+    - A **natural‑language explanation** of how to fix the problem.
+    - A **concrete code patch** targeting the exact snippet that triggered the issue.
+-   If a patch is available, you’ll see:
+    - A clear banner: **“Patch available (press `p` to preview & apply)”**.
+    - Press **`p`** to open a **side‑by‑side diff‑style preview** (Before / After).
+    - Confirm with **`y`** to write the change back to disk, or **`n` / `Esc`** to cancel.
+
+This gives you **instant, context‑aware fixes** for things like:
+
+- Converting heavy JPG/PNG assets into modern formats.
+- Adding `width`/`height` to kill CLS.
+- Wiring in `loading="lazy"` and `srcset` correctly.
+- Cleaning up templates and JSX/TSX image components.
+
+### 🔧 Configuring the AI engine
+
+The AI helper is **fully optional** and controlled through environment variables.
+Use the provided `.env.example` as a starting point:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and pick your provider:
+
+```bash
+# Possible values: openai, anthropic, ollama
+ACTIVE_LLM_PROVIDER=openai
+```
+
+#### OpenAI
+
+```bash
+OPENAI_API_KEY=your-openai-api-key
+# Optional:
+# OPENAI_BASE_URL=https://api.openai.com
+# OPENAI_MODEL=gpt-5.2
+```
+
+#### Anthropic
+
+```bash
+ANTHROPIC_API_KEY=your-anthropic-api-key
+# Optional:
+# ANTHROPIC_BASE_URL=https://api.anthropic.com
+# ANTHROPIC_MODEL=claude-3-5-sonnet-latest
+```
+
+#### Ollama (local)
+
+```bash
+ACTIVE_LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2
+```
+
+Once your environment is set, launch `image-auditor`, open an issue detail, and hit **`a`** to let the AI propose a fix — then **`p` → `y`** to apply it in seconds.
+
+### 🔊 Controlling AI verbosity
+
+By default, Image Auditor tells the AI to **return code only**, with no extra prose, so the Detail view stays clean and patch‑focused.
+
+You can control this with the `AI_VERBOSE` flag in `.env`:
+
+```bash
+# Default (unset or false): code‑only output
+AI_VERBOSE=false
+
+# Verbose mode: allow explanations + code
+AI_VERBOSE=true
+```
+
+- When `AI_VERBOSE=false` (or unset), the prompt instructs the LLM to output **only the structured patch block** (no explanations, no markdown).
+- When `AI_VERBOSE=true`, the AI is allowed to return a **short explanation plus code**, which is rendered under “LLM Suggestion” in the Detail view.
 
 ## 🏗 Build
 
