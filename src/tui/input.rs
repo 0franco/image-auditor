@@ -222,10 +222,10 @@ fn handle_patch_confirm(app: &mut App, key: KeyCode) {
 fn handle_ask_llm(app: &mut App) {
     if matches!(
         app.detail_issue.as_ref().map(|i| &i.kind),
-        Some(IssueKind::WrongFormat)
+        Some(IssueKind::WrongFormat) | Some(IssueKind::OversizedFile)
     ) {
         app.detail_suggestion_error =
-            Some("Patching is not supported for format conversion issues.".into());
+            Some("Patching for format conversion or oversized file issues is not supported.".into());
         return;
     }
     if app.detail_loading_suggestion {
