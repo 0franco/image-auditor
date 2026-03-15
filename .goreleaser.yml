@@ -28,7 +28,7 @@ brews:
   - name: image-auditor
     repository:
       owner: 0franco
-      name: homebrew-image-auditor
+      name: homebrew-ai-image-auditor
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/0franco/image-auditor"
