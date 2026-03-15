@@ -16,6 +16,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Run tests
+        run: cargo test --all --locked
+
       - name: Install Zig
         run: brew install zig
 
