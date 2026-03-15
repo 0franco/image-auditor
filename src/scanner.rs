@@ -41,7 +41,7 @@ impl std::fmt::Display for IssueSeverity {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub enum IssueKind {
     WrongFormat,
     MissingAlt,

@@ -4,7 +4,6 @@ use std::{
     sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
-
 use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
@@ -58,6 +57,7 @@ pub struct App {
     detail_suggestion_rx: Option<mpsc::Receiver<anyhow::Result<LlmSuggestion>>>,
     detail_patch_confirm_mode: bool,
     detail_patch_error: Option<String>,
+    detail_patch_confirm_message: Option<String>,
     // Filter
     filter_severity: Option<IssueSeverity>,
     search_query: String,
@@ -97,6 +97,7 @@ impl App {
             detail_suggestion_rx: None,
             detail_patch_confirm_mode: false,
             detail_patch_error: None,
+            detail_patch_confirm_message: None,
             filter_severity: None,
             search_query: String::new(),
             search_mode: false,
@@ -457,14 +458,20 @@ fn handle_detail_input(app: &mut App, key: KeyCode) {
                 ) {
                     if let Err(e) = apply_suggested_patch(issue, patch) {
                         app.detail_patch_error = Some(format!("Patch failed: {}", e));
+                        app.detail_patch_confirm_message = None;
                     } else {
+                        app.detail_loading_suggestion = false;
                         app.detail_patch_error = None;
+                        app.detail_suggestion = None;
+                        app.detail_suggested_patch = None;
+                        app.detail_patch_confirm_message = Some("Patch applied successfully".to_string());
                     }
                 }
                 app.detail_patch_confirm_mode = false;
             }
             KeyCode::Char('n') | KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
                 app.detail_patch_confirm_mode = false;
+                app.detail_patch_confirm_message = None;
             }
             _ => {}
         }
@@ -484,11 +491,11 @@ fn handle_detail_input(app: &mut App, key: KeyCode) {
             app.detail_scroll = 0;
         }
         KeyCode::Char('a') => {
-            // If issue type is WrongFormat ignore action
             if matches!(
                 app.detail_issue.as_ref().map(|i| &i.kind),
                 Some(IssueKind::WrongFormat)
             ) {
+                app.detail_suggestion_error = Some("Patching is not supported for this issue.".to_string());
                 return;
             }
             if app.detail_loading_suggestion {
@@ -520,14 +527,14 @@ fn handle_detail_input(app: &mut App, key: KeyCode) {
             });
         }
         KeyCode::Char('p') => {
-            // If issue type is WrongFormat ignore action
             if matches!(
                 app.detail_issue.as_ref().map(|i| &i.kind),
                 Some(IssueKind::WrongFormat)
             ) {
+                app.detail_patch_error =
+                    Some("Patching is not supported for this issue.".to_string());
                 return;
             }
-
             if app.detail_suggested_patch.is_some() {
                 app.detail_patch_confirm_mode = true;
                 app.detail_patch_error = None;
@@ -1148,152 +1155,103 @@ fn draw_results(f: &mut Frame, app: &mut App) {
 
 fn draw_detail(f: &mut Frame, app: &mut App) {
     let area = f.area();
-    f.render_widget(
-        Block::default().style(Style::default().bg(Color::Rgb(10, 10, 18))),
-        area,
-    );
+    f.render_widget(Block::default().style(Style::default().bg(Color::Rgb(10, 10, 18))), area);
 
-    let Some(ref issue) = app.detail_issue else {
-        return;
-    };
+    let Some(ref issue) = app.detail_issue else { return };
 
     // Overlay popup
     let popup_area = centered_rect(80, 60, area);
     f.render_widget(Clear, popup_area);
 
     let (sev_color, sev_label) = match issue.severity {
-        IssueSeverity::Error => (Color::Rgb(235, 80, 80), "ERROR"),
+        IssueSeverity::Error =>   (Color::Rgb(235, 80, 80), "ERROR"),
         IssueSeverity::Warning => (Color::Rgb(235, 180, 60), "WARNING"),
-        IssueSeverity::Info => (Color::Rgb(99, 179, 237), "INFO"),
+        IssueSeverity::Info =>    (Color::Rgb(99, 179, 237), "INFO"),
     };
 
     let file_path = issue.file.to_string_lossy().to_string();
-    let file_type = issue
-        .file
-        .extension()
-        .map(|ext| ext.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let file_type = issue.file.extension().map(|ext| ext.to_string_lossy().to_string()).unwrap_or_default();
 
     let mut content = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled(
-                "  Severity  ",
-                Style::default().fg(Color::Rgb(100, 110, 160)),
-            ),
-            Span::styled(
-                sev_label,
-                Style::default().fg(sev_color).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("  Severity  ", Style::default().fg(Color::Rgb(100, 110, 160))),
+            Span::styled(sev_label, Style::default().fg(sev_color).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled(
-                "  Issue     ",
-                Style::default().fg(Color::Rgb(100, 110, 160)),
-            ),
-            Span::styled(
-                issue.kind.to_string(),
-                Style::default()
-                    .fg(Color::Rgb(150, 220, 200))
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("  Issue     ", Style::default().fg(Color::Rgb(100, 110, 160))),
+            Span::styled(issue.kind.to_string(), Style::default().fg(Color::Rgb(150, 220, 200)).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled(
-                "  File      ",
-                Style::default().fg(Color::Rgb(100, 110, 160)),
-            ),
+            Span::styled("  File      ", Style::default().fg(Color::Rgb(100, 110, 160))),
             Span::styled(&file_path, Style::default().fg(Color::Rgb(180, 190, 220))),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled(
-                "  File type      ",
-                Style::default().fg(Color::Rgb(100, 110, 160)),
-            ),
+            Span::styled("  File type ", Style::default().fg(Color::Rgb(100, 110, 160))),
             Span::styled(&file_type, Style::default().fg(Color::Rgb(180, 190, 220))),
         ]),
         Line::from(vec![
-            Span::styled(
-                "  Line      ",
-                Style::default().fg(Color::Rgb(100, 110, 160)),
-            ),
-            Span::styled(
-                issue.line.to_string(),
-                Style::default().fg(Color::Rgb(180, 190, 220)),
-            ),
+            Span::styled("  Line      ", Style::default().fg(Color::Rgb(100, 110, 160))),
+            Span::styled(issue.line.to_string(), Style::default().fg(Color::Rgb(180, 190, 220))),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled(
-                "  Message   ",
-                Style::default().fg(Color::Rgb(100, 110, 160)),
-            ),
-            Span::styled(
-                &issue.message,
-                Style::default().fg(Color::Rgb(220, 220, 240)),
-            ),
+            Span::styled("  Message   ", Style::default().fg(Color::Rgb(100, 110, 160))),
+            Span::styled(&issue.message, Style::default().fg(Color::Rgb(220, 220, 240))),
         ]),
         Line::from(""),
-        Line::from(vec![Span::styled(
-            "  Snippet   ",
-            Style::default().fg(Color::Rgb(100, 110, 160)),
-        )]),
-        Line::from(vec![Span::styled(
-            format!("  {}", issue.snippet),
-            Style::default()
-                .fg(Color::Rgb(100, 200, 130))
-                .add_modifier(Modifier::ITALIC),
-        )]),
+        Line::from(vec![
+            Span::styled("  Snippet   ", Style::default().fg(Color::Rgb(100, 110, 160))),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("  {}", issue.snippet), Style::default().fg(Color::Rgb(100, 200, 130)).add_modifier(Modifier::ITALIC)),
+        ]),
         Line::from(""),
         Line::from(Span::styled(
             fix_advice(&issue.kind),
             Style::default().fg(Color::Rgb(140, 150, 180)),
         )),
         Line::from(""),
+        Line::from(""),
+        Line::from(""),
+        Line::from(""),
     ];
 
     // LLM suggestion state
-    if !app.detail_patch_confirm_mode {
-        if app.detail_loading_suggestion {
+    if app.detail_loading_suggestion {
+        content.push(Line::from(Span::styled(
+            "  ⏳ Asking LLM for fix suggestion...",
+            Style::default().fg(Color::Rgb(99, 179, 237)),
+        )));
+        content.push(Line::from(""));
+    } else if let Some(ref err) = app.detail_suggestion_error {
+        content.push(Line::from(Span::styled(
+            format!("  ⚠ LLM error: {}", err),
+            Style::default().fg(Color::Rgb(235, 80, 80)),
+        )));
+        content.push(Line::from(""));
+    } else if let Some(ref suggestion) = app.detail_suggestion {
+        content.push(Line::from(Span::styled(
+            "  LLM Suggestion",
+            Style::default()
+                .fg(Color::Rgb(150, 220, 200))
+                .add_modifier(Modifier::BOLD),
+        )));
+        content.push(Line::from(""));
+        for line in suggestion.lines() {
             content.push(Line::from(Span::styled(
-                "  ⏳ Asking LLM for fix suggestion...",
-                Style::default().fg(Color::Rgb(99, 179, 237)),
+                format!("  {}", line),
+                Style::default().fg(Color::Rgb(200, 210, 240)),
             )));
-            content.push(Line::from(""));
-        } else if let Some(ref err) = app.detail_suggestion_error {
-            content.push(Line::from(Span::styled(
-                format!("  ⚠ LLM error: {}", err),
-                Style::default().fg(Color::Rgb(235, 80, 80)),
-            )));
-            content.push(Line::from(""));
-        } else if let Some(ref suggestion) = app.detail_suggestion {
-            content.push(Line::from(Span::styled(
-                "  LLM Suggestion",
-                Style::default()
-                    .fg(Color::Rgb(150, 220, 200))
-                    .add_modifier(Modifier::BOLD),
-            )));
-            content.push(Line::from(""));
-            for line in suggestion.lines() {
-                content.push(Line::from(Span::styled(
-                    format!("  {}", line),
-                    Style::default().fg(Color::Rgb(200, 210, 240)),
-                )));
-            }
-            content.push(Line::from(""));
         }
+        content.push(Line::from(""));
     }
 
-    let is_wrong_format_err = matches!(
-            app.detail_issue.as_ref().map(|i| &i.kind),
-            Some(IssueKind::WrongFormat));
-
     // Patch availability / preview
-    // Not allowed to transform images
-    if app.detail_patch_confirm_mode && !is_wrong_format_err {
+    if app.detail_patch_confirm_mode {
         content.push(Line::from(Span::styled(
             "  Patch Preview",
             Style::default()
@@ -1342,13 +1300,25 @@ fn draw_detail(f: &mut Frame, app: &mut App) {
                 Style::default().fg(Color::Rgb(235, 80, 80)),
             )));
         }
+        if let Some(ref msg) = app.detail_patch_confirm_message {
+            content.push(Line::from(Span::styled(
+                format!("  ✅ {}", msg),
+                Style::default().fg(Color::Rgb(100, 235, 120)),
+            )));
+        }
         content.push(Line::from(""));
+        content.push(Line::from(Span::styled(
+            "  [a] Ask LLM for fix  ·  [p] Preview/apply patch  ·  [↑/↓ or j/k] Scroll  ·  [Esc / q] Back",
+            Style::default().fg(Color::Rgb(80, 100, 150)),
+        )));
     }
 
     // Clamp scroll so we don't go past the end unnecessarily
     let visible_lines = popup_area.height.saturating_sub(4) as usize;
     let max_scroll = content.len().saturating_sub(visible_lines);
-    let clamped_scroll = app.detail_scroll.min(max_scroll as u16);
+    let clamped_scroll = app
+        .detail_scroll
+        .min(max_scroll as u16);
 
     f.render_widget(
         Paragraph::new(content)
