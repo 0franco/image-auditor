@@ -50,6 +50,12 @@ Automatically skips: `node_modules`, `.git`, `dist`, `build`, `.next`
 cargo install --path .
 ```
 
+### macOS
+```bash
+brew tap 0franco/ai-image-auditor
+brew install image-auditor
+```
+
 # 🧪 Usage
 
 ```bash
