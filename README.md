@@ -74,6 +74,18 @@ brew update
 brew upgrade image-auditor
 ```
 
+### Linux (Debian / Ubuntu)
+```bash
+# Download the latest .deb for your architecture
+# amd64
+curl -LO https://github.com/0franco/image-auditor/releases/latest/download/image-auditor_linux_amd64.deb
+sudo dpkg -i image-auditor_linux_amd64.deb
+
+# arm64
+curl -LO https://github.com/0franco/image-auditor/releases/latest/download/image-auditor_linux_arm64.deb
+sudo dpkg -i image-auditor_linux_arm64.deb
+```
+
 # 🧪 Usage
 
 ```bash
@@ -197,16 +209,6 @@ Once your environment is set, launch `image-auditor`, open an issue detail, and 
 cargo build --release
 ./target/release/image-auditor
 ```
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=0franco%2Fimage-auditor&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=0franco/image-auditor&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=0franco/image-auditor&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=0franco/image-auditor&type=date&legend=top-left" />
- </picture>
-</a>
 
 ## 🤝 Contributing
 

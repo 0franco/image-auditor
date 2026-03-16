@@ -11,10 +11,24 @@ builds:
     targets:
       - x86_64-apple-darwin
       - aarch64-apple-darwin
+      - x86_64-unknown-linux-gnu
+      - aarch64-unknown-linux-gnu
 
 archives:
   - format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+nfpms:
+  - id: default
+    package_name: image-auditor
+    vendor: 0franco
+    homepage: "https://github.com/0franco/image-auditor"
+    maintainer: "0franco"
+    description: "Finds & AI-fixes Lighthouse image issues (CLS, lazy loading, WebP, srcset) across your entire codebase in seconds."
+    license: MIT
+    formats:
+      - deb
+    bindir: /usr/local/bin
 
 checksum:
   name_template: "checksums.txt"
@@ -32,7 +46,7 @@ brews:
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/0franco/image-auditor"
-    description: "Find Lighthouse image issues instantly. Audits CLS, lazy loading, formats, and responsive images across your codebase."
+    description: "Finds & AI-fixes Lighthouse image issues (CLS, lazy loading, WebP, srcset) across your entire codebase in seconds."
     license: "MIT"
     install: bin.install "image-auditor"
     test: |
